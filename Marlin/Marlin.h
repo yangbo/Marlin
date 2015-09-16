@@ -274,3 +274,7 @@ extern void digipot_i2c_init();
 
 extern void calculate_volumetric_multipliers();
 
+#ifdef ENABLE_MANUAL_BED_LEVELING
+extern const float mbl_speed[];   // manual bed leveling speed
+#endif
+

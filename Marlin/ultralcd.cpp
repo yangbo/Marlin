@@ -27,6 +27,8 @@ int absPreheatFanSpeed;
   static float manual_feedrate[] = MANUAL_FEEDRATE;
 #endif // ULTIPANEL
 
+static unsigned long timeoutToStatus = 0;
+
 /* !Configuration settings */
 
 //Function pointer to menu functions.
@@ -65,6 +67,10 @@ static void lcd_set_contrast();
 #endif
 static void lcd_control_retract_menu();
 static void lcd_sdcard_menu();
+
+#ifdef ENABLE_MANUAL_BED_LEVELING
+static void lcd_manual_bed_leveling();
+#endif
 
 #ifdef DELTA_CALIBRATION_MENU
 static void lcd_delta_calibrate_menu();
@@ -607,6 +613,19 @@ static void lcd_prepare_menu()
 {
     START_MENU();
     MENU_ITEM(back, MSG_MAIN, lcd_main_menu);
+    MENU_ITEM(submenu, MSG_MOVE_AXIS, lcd_move_menu);
+#if TEMP_SENSOR_0 != 0
+    #if TEMP_SENSOR_1 != 0 || TEMP_SENSOR_2 != 0 || TEMP_SENSOR_BED != 0
+        MENU_ITEM(submenu, MSG_PREHEAT_PLA, lcd_preheat_pla_menu);
+        MENU_ITEM(submenu, MSG_PREHEAT_ABS, lcd_preheat_abs_menu);
+    #else
+        MENU_ITEM(function, MSG_PREHEAT_PLA, lcd_preheat_pla0);
+        MENU_ITEM(function, MSG_PREHEAT_ABS, lcd_preheat_abs0);
+    #endif
+#endif
+    MENU_ITEM(function, MSG_COOLDOWN, lcd_cooldown);
+    MENU_ITEM(submenu, MSG_MANUAL_BED_LEVELING, lcd_manual_bed_leveling);
+
 #ifdef SDSUPPORT
     #ifdef MENU_ADDAUTOSTART
       MENU_ITEM(function, MSG_AUTOSTART, lcd_autostart_sd);
@@ -616,16 +635,6 @@ static void lcd_prepare_menu()
     MENU_ITEM(gcode, MSG_AUTO_HOME, PSTR("G28"));
     MENU_ITEM(function, MSG_SET_HOME_OFFSETS, lcd_set_home_offsets);
     //MENU_ITEM(gcode, MSG_SET_ORIGIN, PSTR("G92 X0 Y0 Z0"));
-#if TEMP_SENSOR_0 != 0
-  #if TEMP_SENSOR_1 != 0 || TEMP_SENSOR_2 != 0 || TEMP_SENSOR_BED != 0
-    MENU_ITEM(submenu, MSG_PREHEAT_PLA, lcd_preheat_pla_menu);
-    MENU_ITEM(submenu, MSG_PREHEAT_ABS, lcd_preheat_abs_menu);
-  #else
-    MENU_ITEM(function, MSG_PREHEAT_PLA, lcd_preheat_pla0);
-    MENU_ITEM(function, MSG_PREHEAT_ABS, lcd_preheat_abs0);
-  #endif
-#endif
-    MENU_ITEM(function, MSG_COOLDOWN, lcd_cooldown);
 #if PS_ON_PIN > -1
     if (powersupply)
     {
@@ -634,7 +643,6 @@ static void lcd_prepare_menu()
         MENU_ITEM(gcode, MSG_SWITCH_PS_ON, PSTR("M80"));
     }
 #endif
-    MENU_ITEM(submenu, MSG_MOVE_AXIS, lcd_move_menu);
     END_MENU();
 }
 
@@ -1080,6 +1088,178 @@ menu_edit_type(unsigned long, long5, ftostr5, 0.01)
 	}
 #endif
 
+#ifdef ENABLE_MANUAL_BED_LEVELING
+static float current_manual_leveling_step = 0;
+static int prev_manual_leveling_step = MANUAL_BED_LEVELING_TOTAL_POINTS-1;       // previous step
+
+// echo plan_buffer_line() function arguments to serial console for debug.
+void echo_plan_buffer_line_args(const float &x, const float &y, const float &z, const float &e,
+                                float feed_rate, const uint8_t &extruder)
+{
+    SERIAL_ECHO_START;
+    SERIAL_ECHO("plan_linear X: ");
+    SERIAL_ECHO(x);
+    SERIAL_ECHO(", Y: ");
+    SERIAL_ECHO(y);
+    SERIAL_ECHO(", Z: ");
+    SERIAL_ECHO(z);
+    SERIAL_ECHO(", E: ");
+    SERIAL_ECHO(e);
+    SERIAL_ECHO(", feed_rate: ");
+    SERIAL_ECHO(feed_rate);
+    SERIAL_ECHO(", extruder: ");
+    SERIAL_ECHOLN(extruder);
+}
+
+// safely set current position just for lcd features
+static void set_current_size(int axis, float pos, float min, float max)
+{
+    if (pos > max) pos = max;
+    if (pos < min) pos = min;
+    current_position[axis] = pos;
+}
+
+static void lift_z()
+{
+    refresh_cmd_timeout();
+    current_position[Z_AXIS] = MBL_Z_UP_SIZE;
+
+    SERIAL_ECHO_START;
+    SERIAL_ECHO(" Lift Z to :");
+    echo_plan_buffer_line_args(current_position[X_AXIS], current_position[Y_AXIS], current_position[Z_AXIS],
+                     current_position[E_AXIS], mbl_speed[MBL_SPEED_Z], active_extruder);
+    plan_buffer_line(current_position[X_AXIS], current_position[Y_AXIS], current_position[Z_AXIS],
+                     current_position[E_AXIS], mbl_speed[MBL_SPEED_Z], active_extruder);
+}
+
+static void mbl_update_lcd_timeout()
+{
+    timeoutToStatus = millis() + MBL_LCD_TIMEOUT_TO_STATUS;
+}
+
+static void lcd_manual_bed_leveling()
+{
+    static bool mbl_homed = false;
+    // homing if has not done yet
+    if (!mbl_homed &&
+        (current_manual_leveling_step == 0 &&
+                prev_manual_leveling_step == MANUAL_BED_LEVELING_TOTAL_POINTS - 1))
+    {
+        mbl_homed = true;
+        refresh_cmd_timeout();
+        mbl_update_lcd_timeout();
+        SERIAL_ECHO_START;
+        SERIAL_ECHOLN("Homing for Bed Leveling...");
+        menu_action_gcode(PSTR("G28"));
+    }
+    int planned_moves = movesplanned();
+//    SERIAL_ECHO_START;
+//    SERIAL_ECHO(" Planned moves: ");
+//    SERIAL_ECHOLN(planned_moves);
+
+    // skip encoding when still moving
+    if (planned_moves != 0)
+    {
+        encoderPosition = 0;
+    }
+    if (encoderPosition != 0 )
+    {
+        refresh_cmd_timeout();
+        mbl_update_lcd_timeout();
+
+        // compute current point
+        current_manual_leveling_step += float((int)encoderPosition) * SENSITIVITY_SCALE;
+        if (prev_manual_leveling_step == (int) current_manual_leveling_step)
+        {
+            SERIAL_ECHO_START;
+            SERIAL_ECHO(" Skip intermediate button turning values: ");
+            SERIAL_ECHOLN(current_manual_leveling_step);
+            return;     // just accumulate button turning value
+        }
+        current_manual_leveling_step = (int) current_manual_leveling_step;  // round to int
+        // debug info
+        SERIAL_ECHO_START;
+        SERIAL_ECHO(" Encoder Position: ");
+        SERIAL_ECHO((int)encoderPosition);
+        SERIAL_ECHO(" Current Leveling Step: ");
+        SERIAL_ECHOLN(current_manual_leveling_step);
+
+        // limit change can only add 1 point a time
+        if ((int)current_manual_leveling_step - prev_manual_leveling_step > 1)
+        {
+            current_manual_leveling_step = prev_manual_leveling_step + 1;
+        }
+        // range check
+        if (current_manual_leveling_step < 0)
+            current_manual_leveling_step = MANUAL_BED_LEVELING_TOTAL_POINTS - 1;
+
+        if (current_manual_leveling_step > MANUAL_BED_LEVELING_TOTAL_POINTS - 1)
+            current_manual_leveling_step = 0;   // restart from 0
+
+        // reset encoder
+        encoderPosition = 0;
+
+        // move up z axis
+        mbl_update_lcd_timeout();
+        lift_z();
+        // move xy
+        int current_step = (int) current_manual_leveling_step;
+        set_current_size(X_AXIS,
+                         (current_step % MANUAL_BED_LEVELING_X_POINTS) * MANUAL_BED_LEVELING_X_STEP
+                         + MANUAL_BED_LEVELING_X_STEP / 2,
+                         X_MIN_POS, X_MAX_POS);
+        set_current_size(Y_AXIS,
+                         ((current_step / MANUAL_BED_LEVELING_X_POINTS) % MANUAL_BED_LEVELING_Y_POINTS) * MANUAL_BED_LEVELING_Y_STEP
+                         + MANUAL_BED_LEVELING_Y_STEP / 2,
+                         Y_MIN_POS, Y_MAX_POS);
+        //    echo debug logs
+        echo_plan_buffer_line_args(current_position[X_AXIS], current_position[Y_AXIS], current_position[Z_AXIS],
+                         current_position[E_AXIS], mbl_speed[MBL_SPEED_XY], active_extruder);
+        refresh_cmd_timeout();
+        mbl_update_lcd_timeout();
+        //    linear move
+        plan_buffer_line(current_position[X_AXIS], current_position[Y_AXIS], current_position[Z_AXIS],
+                         current_position[E_AXIS], mbl_speed[MBL_SPEED_XY], active_extruder);
+        // homing z axis
+        refresh_cmd_timeout();
+        mbl_update_lcd_timeout();
+        menu_action_gcode(PSTR("G28 Z"));
+
+        lcdDrawUpdate = 1;
+
+        SERIAL_ECHO_START;
+        SERIAL_ECHO(" Finished Leveling Point: ");
+        SERIAL_ECHOLN(current_step);
+
+        // enable homing again
+        if (current_step == MANUAL_BED_LEVELING_TOTAL_POINTS - 1)
+        {
+            mbl_homed = false;
+        }
+        prev_manual_leveling_step = (int) current_manual_leveling_step;
+    }
+    if (lcdDrawUpdate)
+    {
+        // erase screen is done by 'submenu' type of MENUITEM
+        lcd_implementation_drawedit(PSTR("Leveling Point"), itostr3(current_manual_leveling_step));
+    }
+    if (LCD_CLICKED)
+    {
+        current_manual_leveling_step = 0;
+        // show new display menu
+        lcd_goto_menu(lcd_prepare_menu);
+        // lift z and homing x,y
+        refresh_cmd_timeout();
+        mbl_update_lcd_timeout();
+        lift_z();
+        // homing x y axis
+        refresh_cmd_timeout();
+        mbl_update_lcd_timeout();
+        menu_action_gcode(PSTR("G28 X Y"));
+    }
+}
+#endif // ENABLE_MANUAL_BED_LEVELING
+
 /** End of menus **/
 
 static void lcd_quick_feedback()
@@ -1175,10 +1355,9 @@ void lcd_init()
 #endif
 }
 
+
 void lcd_update()
 {
-    static unsigned long timeoutToStatus = 0;
-
     #ifdef LCD_HAS_SLOW_BUTTONS
     slow_buttons = lcd_implementation_read_slow_buttons(); // buttons which take too long to read in interrupt context
     #endif
@@ -1240,10 +1419,10 @@ void lcd_update()
             lcdDrawUpdate = 1;
             encoderPosition += encoderDiff / ENCODER_PULSES_PER_STEP;
             encoderDiff = 0;
-            timeoutToStatus = millis() + LCD_TIMEOUT_TO_STATUS;
+            timeoutToStatus = fmax(timeoutToStatus, millis() + LCD_TIMEOUT_TO_STATUS);  // it maybe has been set a larger timeout by 'Manual Bed Leveling feature'
         }
         if (LCD_CLICKED)
-            timeoutToStatus = millis() + LCD_TIMEOUT_TO_STATUS;
+            timeoutToStatus = fmax(timeoutToStatus, millis() + LCD_TIMEOUT_TO_STATUS);
 #endif//ULTIPANEL
 
 #ifdef DOGLCD        // Changes due to different driver architecture of the DOGM display
@@ -1444,6 +1623,8 @@ bool lcd_clicked()
 {
   return LCD_CLICKED;
 }
+
+
 #endif//ULTIPANEL
 
 /********************************/
@@ -1721,3 +1902,4 @@ void copy_and_scalePID_d()
 }
 
 #endif //ULTRA_LCD
+

@@ -48,7 +48,7 @@
 #endif
 
 // Define this to set a custom name for your generic Mendel,
-// #define CUSTOM_MENDEL_NAME "This Mendel"
+#define CUSTOM_MENDEL_NAME "PrusaI3"
 
 // Define this to set a unique identifier for this printer, (Used by some programs to differentiate between machines)
 // You can use an online service to generate a random UUID. (eg http://www.uuidgenerator.net/version4)
@@ -467,6 +467,25 @@ const bool Z_MAX_ENDSTOP_INVERTING = true; // set to true to invert the logic of
   
 #endif // ENABLE_AUTO_BED_LEVELING
 
+#define ENABLE_MANUAL_BED_LEVELING          // uncomment to enable manual bed leveling feature
+#ifdef ENABLE_MANUAL_BED_LEVELING
+  // These are configuration can be customized for MBL.
+  #define MANUAL_BED_LEVELING_X_POINTS 4    // the total points along x axis for calibrate bed leveling, actual points is this - 1.
+  #define MANUAL_BED_LEVELING_Y_POINTS 4    // the total points along y axis for calibrate bed leveling, actual points is this - 1.
+  #define SENSITIVITY_SCALE 0.05            // the scale of sensitivity of nob button turning
+  #define MANUAL_BED_LEVELING_SPEED {50, 4} // the speed of axis xy,z,e for manual bed leveling movement in mm/second
+  #define MBL_Z_UP_SIZE 10.0                // lift size of z axis when move extruder head in millimeters
+  #define MBL_LCD_TIMEOUT_TO_STATUS 180000   // timeout for LCD jump to main menu in milli-seconds
+
+  // These are macro for computer, you do not need to modify
+  #define MBL_SPEED_XY 0  // the xy speed index of MANUAL_BED_LEVELING_SPEED
+  #define MBL_SPEED_Z 1   // the z speed index of MANUAL_BED_LEVELING_SPEED
+  #define MANUAL_BED_LEVELING_TOTAL_POINTS  (MANUAL_BED_LEVELING_X_POINTS * MANUAL_BED_LEVELING_Y_POINTS)
+  // the interval of manual leveling along x and y axis, unit is millimeters
+  #define MANUAL_BED_LEVELING_X_STEP  (X_MAX_POS / MANUAL_BED_LEVELING_X_POINTS)
+  #define MANUAL_BED_LEVELING_Y_STEP  (Y_MAX_POS / MANUAL_BED_LEVELING_Y_POINTS)
+#endif  // ENABLE_MANUAL_BED_LEVELING
+
 
 // The position of the homing switches
 //#define MANUAL_HOME_POSITIONS  // If defined, MANUAL_*_HOME_POS below will be used
@@ -798,3 +817,4 @@ const bool Z_MAX_ENDSTOP_INVERTING = true; // set to true to invert the logic of
 #include "thermistortables.h"
 
 #endif //__CONFIGURATION_H
+

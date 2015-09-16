@@ -140,4 +140,6 @@
     #define MSG_DELTA_CALIBRATE_CENTER      "Calibrate Center"
 #endif // DELTA_CALIBRATION_MENU
 
+#define MSG_MANUAL_BED_LEVELING             "Manual Leveling"
 #endif // LANGUAGE_EN_H
+

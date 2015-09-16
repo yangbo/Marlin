@@ -341,6 +341,10 @@ bool cancel_heatup = false ;
 const char errormagic[] PROGMEM = "Error:";
 const char echomagic[] PROGMEM = "echo:";
 
+#ifdef ENABLE_MANUAL_BED_LEVELING
+const float mbl_speed[] = MANUAL_BED_LEVELING_SPEED;
+#endif
+
 //===========================================================================
 //=============================Private Variables=============================
 //===========================================================================
