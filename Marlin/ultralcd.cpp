@@ -1150,7 +1150,7 @@ static void lcd_manual_bed_leveling()
         mbl_update_lcd_timeout();
         SERIAL_ECHO_START;
         SERIAL_ECHOLN("Homing for Bed Leveling...");
-        menu_action_gcode(PSTR("G28"));
+        enquecommand_P(PSTR("G28"));
     }
     int planned_moves = movesplanned();
 //    SERIAL_ECHO_START;
@@ -1223,7 +1223,7 @@ static void lcd_manual_bed_leveling()
         // homing z axis
         refresh_cmd_timeout();
         mbl_update_lcd_timeout();
-        menu_action_gcode(PSTR("G28 Z"));
+        enquecommand_P(PSTR("G28 Z"));
 
         lcdDrawUpdate = 1;
 
@@ -1243,7 +1243,8 @@ static void lcd_manual_bed_leveling()
         // erase screen is done by 'submenu' type of MENUITEM
         lcd_implementation_drawedit(PSTR("Leveling Point"), itostr3(current_manual_leveling_step));
     }
-    if (LCD_CLICKED)
+    // LCD clicked and no planned moves
+    if (LCD_CLICKED && !planned_moves)
     {
         current_manual_leveling_step = 0;
         // show new display menu
@@ -1255,7 +1256,7 @@ static void lcd_manual_bed_leveling()
         // homing x y axis
         refresh_cmd_timeout();
         mbl_update_lcd_timeout();
-        menu_action_gcode(PSTR("G28 X Y"));
+        enquecommand_P(PSTR("G28 X Y"));
     }
 }
 #endif // ENABLE_MANUAL_BED_LEVELING
